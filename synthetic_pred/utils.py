@@ -1,9 +1,12 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier, LGBMRegressor
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.linear_model import Lasso, LinearRegression, Ridge
+from sklearn.metrics import mean_squared_error
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 def find_non_numeric_cols(df: pd.DataFrame) -> List[Tuple[str, np.generic]]:
@@ -74,6 +77,73 @@ def test_train_split_by_nulls(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFr
     return train_df, test_df
 
 
+def split_df_k_fold(
+    df: pd.DataFrame, k: int, random_state: int = 42
+) -> List[pd.DataFrame]:
+    """Split a DataFrame into k folds."""
+    if df is None:
+        raise ValueError("DataFrame 'df' cannot be None")
+    if k < 2:
+        raise ValueError("k must be greater than 1")
+    if k <= 0:
+        raise ValueError("k must be a positive integer")
+    if k > len(df):
+        raise ValueError("k must be less than the number of rows in the DataFrame")
+    # shuffle the dataframe
+    df_shuffled = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+    # use numpy array to split the dataframe
+    folds = np.array_split(df_shuffled, k)
+    return folds
+
+
+# implement k-fold cross validation for linear regression, Ridge and Lasso models
+def k_fold_cross_validation(
+    df: pd.DataFrame,
+    k: int,
+    model: Union[LinearRegression, Lasso, Ridge],
+    random_state: int = 42,
+) -> float:
+    """Perform k-fold cross validation for a given model."""
+    if df is None:
+        raise ValueError("DataFrame 'df' cannot be None")
+    if k < 2:
+        raise ValueError("k must be greater than 1")
+    if k <= 0:
+        raise ValueError("k must be a positive integer")
+    if k > len(df):
+        raise ValueError("k must be less than the number of rows in the DataFrame")
+    if model is None:
+        raise ValueError("Model cannot be None")
+    # split the dataframe into k folds
+    folds = split_df_k_fold(df, k, random_state=random_state)
+    # initialize list to store the MSE for each fold
+    fold_mse = []
+    # iterate over each fold
+    for i, fold in enumerate(folds):
+        # get the training set by concatenating all folds except the current fold
+        train_set = pd.concat([f for j, f in enumerate(folds) if j != i])
+        # get the validation set
+        val_set = fold
+        # split the training and validation sets into X and y
+        X_train = train_set.drop(columns=["target"])
+        y_train = train_set["target"]
+        X_val = val_set.drop(columns=["target"])
+        y_val = val_set["target"]
+        # standardize the data
+        scalar = StandardScaler()
+        X_train_scaled = scalar.fit_transform(X_train)
+        X_val_scaled = scalar.transform(X_val)
+        # fit the model
+        model.fit(X_train_scaled, y_train)
+        # make predictions
+        y_pred = model.predict(X_val_scaled)
+        # calculate the mean squared error
+        mse = mean_squared_error(y_val, y_pred)
+        # append the mse to the list
+    fold_mse.append(mse)
+    return float(np.mean(fold_mse))
+
+
 def impute_missing_values_numeric(
     df: pd.DataFrame, null_cols: Optional[List[str]] = None
 ) -> pd.DataFrame:
@@ -119,6 +189,28 @@ def impute_missing_values_ordinal(
         df.loc[nan_indices, col] = y_pred
 
     return df
+
+
+def plot_lasso_ridge_errors(
+    lasso_mse: Dict[float, float], ridge_mse: Dict[float, float]
+) -> None:
+    """Plot mean squared error vs lambda for Lasso and Ridge."""
+    lasso_lambdas = list(lasso_mse.keys())
+    lasso_errors = list(lasso_mse.values())
+
+    ridge_lambdas = list(ridge_mse.keys())
+    ridge_errors = list(ridge_mse.values())
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(lasso_lambdas, lasso_errors, label="Lasso", marker="o")
+    plt.plot(ridge_lambdas, ridge_errors, label="Ridge", marker="o")
+    plt.xlabel("Lambda Values (Log Scale)")
+    plt.ylabel("Validation Mean Squared Error")
+    plt.title("Validation Mean Squared Error vs Lambda for Lasso and Ridge")
+    plt.xscale("log")
+    plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+    plt.legend()
+    plt.show()
 
 
 def encode_nominal_features(
